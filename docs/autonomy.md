@@ -73,8 +73,8 @@ backlog → 设计辩论(2-4轮) → 契约定稿 → claimed → executing → 
 
 定位 = **不下场的裁判**，不是第三个池公民（裁判与玩家训练来源不同，消解 LLM 自我偏好）：
 辩论仲裁 / 双实现盲裁判（硬任务两边各做一版，GLM 只看 diff 不看作者）/ 协议红队。
-接入 = headless `claude -p` + ANTHROPIC_BASE_URL 指智谱 Anthropic 兼容端点
-（或 OpenRouter 喂 codex），wrapper 内 profile 切换；无状态，结论以 refs 落池。
+接入 = ~~headless `claude -p` + ANTHROPIC_BASE_URL~~ **已作废**（2026-06-13 裁决：claude -p 全线禁用，
+改为纯 HTTP API 调用智谱端点）；无状态，结论以 refs 落池。
 跑顺且确实需要第三个全职辩手时再考虑升格为池公民。
 
 ## 进化环（"左脚踩右脚"的有界版）

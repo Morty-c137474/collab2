@@ -37,3 +37,18 @@
 裁决：新仓库不自建调度/状态机/账本——Issue=契约、draft PR=进行中、Actions=审计公证、branch protection+禁自批=人闸；Claude 交互会话当协调者（禁 claude -p 与同机制 Agent SDK），codex exec --json 当 Codex 执行器；交叉评审外包云端（@codex review + claude-code-action OAuth）。
 理由：四路实证研究确认此模式已被官方主流化；禁自批使人闸由协议强制；自写胶水缩到数百行。
 被拒方案：vibe-kanban 当地基（母公司关停 sunsetting）；Gas Town（强约定、Windows 二等）；LangGraph/CrewAI（编排外部 CLI 错配过重）；Agent SDK（与 claude -p 同机制，且订阅额度按 API 价烧得快）。
+
+## 2026-06-13 人闸改双账号结构：AI 共用仅 Write 权限的机器账号
+裁决：注册一个免费机器账号给两个 AI 共用（仅 Write 协作者，不给 admin），人类账号保留 owner；approve 后立即 merge 封死抢跑缝隙。机器账号就位前不开 Require approvals。
+理由：官方规则"PR 作者不能自批"使共用账号 + approvals 成死结；不开 approvals 则任何持 token 进程可直接合并；admin 绕过（gh pr merge --admin）对共用账号的 agent 同样畅通（docs.github.com 逐字核实）。
+被拒方案：共用人类账号 + 禁自批（原蓝图方案，逻辑死结）；仅靠 fine-grained PAT 收权（绕过资格挂在账号角色而非 token 上）。
+
+## 2026-06-13 Agent SDK / claude -p 全线不依赖，claude-code-action 剔除
+裁决：claude-code-action 剔出方案（官方自述建在 Agent SDK 上，6/15 起计入付费 Agent SDK credit）；Channels / Routines / Agent SDK 额度从"升级路径"移入不做清单。Claude 侧评审改为长驻会话派干净上下文 subagent + gh pr review。
+理由：方案全订阅化——交互会话、subagent、codex exec、@codex review 全部计入两家订阅常规额度，6/15 计费切换零影响。
+被拒方案：claude-code-action OAuth（Agent SDK 机制 + 月度 credit 封顶）；为评审买 API key。
+
+## 2026-06-13 GLM 仲裁接法 = 纯 HTTP API，作废一代 claude -p 接法
+裁决：GLM 仲裁用纯 HTTP API 调用智谱端点；autonomy.md 所记"headless claude -p + ANTHROPIC_BASE_URL"一代接法作废。
+理由：claude -p 全线禁用；仲裁是无状态单轮调用，不需要 agent harness。
+被拒方案：claude -p 指智谱端点（违反禁令）；OpenRouter 喂 codex（多一层依赖）。

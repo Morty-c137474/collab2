@@ -29,13 +29,14 @@ Claude 会话的官方自驱原语（全部查证可用）：
 - **/loop + CronCreate**：会话内定时心跳（7 天过期需续期）；
 - **Monitor 工具**：watch 池文件尾部，事件驱动免轮询——拉模式升级为推模式；
 - **Agent tool / Agent Teams**（实验性）：Claude 侧内部并行；Teams 的 TaskCompleted hook（exit 2 阻止任务完成）是天然机器审计门；
-- 升级路径（不当地基）：**Channels**（外部脚本把消息推进会话，research preview）、**Routines fire API**（HTTP 触发云端会话）、**Agent SDK 订阅额度**（2026-06-15 生效，Max 20x $200/月按 API 价扣，烧得快，且机制上仍是 headless）。
+- ~~升级路径~~ **已移入不做清单**（2026-06-13 裁决，见 decisions.md）：Channels / Routines / Agent SDK 订阅额度——方案全订阅化，不依赖 Agent SDK credit（2026-06-15 起按月度代金券计量，与 claude -p 同池）。
 
 ## 二、Codex 侧：三种接法
 
 | 接法 | 用途 | 形态 |
 |---|---|---|
-| `codex exec --json` | 干活轮（主力） | `codex exec --json -C <worktree> --sandbox workspace-write --ask-for-approval never --output-last-message <file>` |
+| `codex exec --json` | 干活轮（主力） | `codex exec --json -C <worktree> --sandbox workspace-write --output-last-message <file>`（exec 即非交互，0.121+ 无 --ask-for-approval 参数） |
+| `codex exec review` | Codex 本地评审轮 | 对当前仓库跑代码评审，输出由胶水经 `gh pr review --comment` 落 PR |
 | `@openai/codex-sdk` | Node 编排时平替 | 同一 CLI 的 spawn 封装，Thread/run API，免手写 JSONL 解析 |
 | `codex mcp-server` | 辩论/紧耦合对话 | Claude Code 把 codex 注册为 MCP server，直接调 codex/codex-reply 工具 |
 
@@ -51,8 +52,8 @@ Claude 会话的官方自驱原语（全部查证可用）：
 | claim 消息 | `gh issue edit --add-assignee` + label |
 | 状态机 phases | **draft PR → ready**（天然持久，走神免疫） |
 | audit.mjs 本地裁判 | 本地预跑 + **Actions required check 公证复跑**（中立第三方，本地自跑自报是自我声明） |
-| 交叉评审说话轮 | **双通道白嫖云端**：`@codex review`（计 ChatGPT 订阅）+ claude-code-action 用 `claude setup-token` OAuth（计 Max 订阅）——零 API key |
-| 人类合并约定 | **branch protection + GitHub 禁自批**：两个 agent 共用你的账号 → 唯一能点 approval 的就是你本人。人类闸门从"自觉"变成"协议强制"——这是整个蓝图最优雅的一笔 |
+| 交叉评审说话轮 | Claude 的 PR ← `@codex review`（云端，计 ChatGPT 订阅）或 `codex exec review`（本地）；Codex 的 PR ← Claude 长驻会话派**干净上下文 subagent** 评审（计 Max 交互额度）。~~claude-code-action~~ 已剔除（Agent SDK 机制，2026-06-13 裁决）——零 API key 不变 |
+| 人类合并约定 | **branch protection + 双账号结构**（2026-06-13 修正）：AI 共用一个仅 Write 权限的机器账号，人类账号保留 owner。GitHub 规定 PR 作者不能自批 + AI 无 admin 角色无法绕过 → 唯一能 approve+merge 的就是你本人。⚠️ 原"共用人类账号 + 禁自批"方案有死结：单账号下无人有资格 approve，或 agent 持 admin token 可 `gh pr merge --admin` 绕过 |
 | 保护路径（hooks/lib） | CODEOWNERS |
 | viewer | GitHub UI（viewer 退役或保留极简版） |
 
@@ -98,7 +99,7 @@ collab2/
 2. Claude 会话认领（assignee+label），开 worktree + draft PR，实现 + 本地跑 audit；
 3. 或者派 Codex：`codex exec -C <worktree>`，turn-log 记录 prompt/输出/usage；
 4. `gh pr ready` → Actions 公证（测试 + audit.mjs）→ required check；
-5. 交叉评审：`@codex review` + claude-code-action 自动 review + 本地 `gh pr review --comment` 补充；分歧 → GLM API 仲裁（无需 agent harness，纯 API 调用）；
+5. 交叉评审：Claude 的 PR 用 `@codex review`（或本地 `codex exec review`）；Codex 的 PR 由 Claude 会话派干净上下文 subagent 评，结论经 `gh pr review` 落 PR；分歧 → GLM API 仲裁（纯 HTTP 调用，无需 agent harness）；
 6. 你点 merge（禁自批保证只有你能点）；
 7. 晨报脚本每早汇总；每 10 个合并 PR 自动开一个回顾 issue（进化环照搬一代设计：变异/选择/记忆 + ≤20% 预算 + 指标变差回滚）。
 
@@ -108,7 +109,7 @@ collab2/
 
 ## 八、风险与开放问题
 
-1. **订阅限流窗口共享**：claude-code-action 的 OAuth 与你的交互会话共享 Max 限额，CI 评审频繁会挤占；先小流量测。
+1. ~~订阅限流窗口共享~~ **已消解**（2026-06-13）：claude-code-action 剔除后，Claude 侧评审走会话内 subagent，全部计入交互额度，不再有 CI 挤占问题。
 2. **Windows 原生 codex 沙箱**历史上弱于 macOS/Linux，落地先实测 `--sandbox workspace-write` 的实际约束力。
 3. **实验性依赖**全部标记为升级路径而非地基（Channels/Teams/Routines/Agent SDK 额度）。
 4. **代理问题先修**：git/gh 统一走 7897 代理或 ssh:443，这是 GitHub 层可靠性的前提。
@@ -116,9 +117,9 @@ collab2/
 
 ## 九、启动顺序（一天可穿透）
 
-1. 修代理（git+gh 统一配置）→ 建公开仓 + issue 模板 + branch protection + audit.yml；
+1. 修代理（git+gh 统一配置，gh 须显式 HTTPS_PROXY）→ 建公开仓 + issue 模板 + branch protection + audit.yml；
 2. 移植 audit.mjs / turn-log.mjs / decisions.md / context.md；
-3. 接 Codex cloud review + claude-code-action（`claude setup-token` → secret）；
+3. 注册机器账号（AI 共用，仅 Write 协作者）→ 开启 Require approvals(1)；可选接 Codex cloud review（chatgpt.com/codex 连仓库 + 开 Code review 开关）；
 4. 写 codex-turn.mjs 胶水；
 5. 手摇穿透第一个真任务（上面第六节流程），记摩擦清单；
 6. 自动化：/goal 模板 + /loop 心跳 + Monitor watch 池。

@@ -12,7 +12,26 @@ const USAGE_FIELDS = [
   "reasoning_output_tokens"
 ];
 
-function normalizeCodexBin(codexBin) {
+const DEFAULT_TIMEOUT_MS = 600000;
+const STDERR_TAIL_MAX_BYTES = 16384;
+
+function validateTurnInputs(taskId, turn) {
+  if (typeof taskId !== "string" || !taskId.trim()) {
+    throw new Error("taskId 不得为空");
+  }
+  if (!Number.isInteger(turn) || turn < 0) {
+    throw new Error("turn 必须是非负整数");
+  }
+}
+
+function normalizeTimeoutMs(timeoutMs) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("timeoutMs 必须是正整数");
+  }
+  return timeoutMs;
+}
+
+function normalizeCodexBin(codexBin, platform = process.platform) {
   if (Array.isArray(codexBin)) {
     if (codexBin.length === 0) {
       throw new Error("codexBin 数组不得为空");
@@ -21,6 +40,9 @@ function normalizeCodexBin(codexBin) {
   }
 
   if (typeof codexBin === "string" && codexBin.trim()) {
+    if (platform === "win32") {
+      return ["cmd", "/c", codexBin];
+    }
     return [codexBin];
   }
 
@@ -54,23 +76,64 @@ function extractUsage(stdout) {
   return usage;
 }
 
-function runChild(command, args) {
+function appendTailBuffer(current, chunk, maxBytes) {
+  const next = Buffer.concat([current, Buffer.from(chunk)]);
+  return next.length > maxBytes ? next.subarray(next.length - maxBytes) : next;
+}
+
+function runChild(command, args, { timeoutMs, spawnImpl = spawn } = {}) {
   return new Promise(resolve => {
-    const child = spawn(command, args, {
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+    let child;
+
+    try {
+      child = spawnImpl(command, args, {
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+    } catch (error) {
+      resolve({
+        stdout: "",
+        stderrTail: "",
+        exitCode: 1,
+        timedOut: false,
+        error
+      });
+      return;
+    }
 
     let stdout = "";
+    let stderrTail = Buffer.alloc(0);
     let exitCode = 1;
     let timedOut = false;
+    let settled = false;
+    let timer = null;
+
+    const finish = payload => {
+      if (settled) return;
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      resolve({
+        stdout,
+        stderrTail: stderrTail.toString("utf8"),
+        exitCode,
+        timedOut,
+        ...payload
+      });
+    };
 
     child.stdout.on("data", chunk => {
       stdout += chunk;
     });
 
-    child.on("error", () => {
+    child.stderr.on("data", chunk => {
+      stderrTail = appendTailBuffer(stderrTail, chunk, STDERR_TAIL_MAX_BYTES);
+    });
+
+    child.on("error", error => {
       exitCode = 1;
+      finish({ error });
     });
 
     child.on("close", (code, signal) => {
@@ -80,8 +143,14 @@ function runChild(command, args) {
       if (signal === "SIGTERM") {
         timedOut = true;
       }
-      resolve({ stdout, exitCode, timedOut });
+      finish({});
     });
+
+    timer = setTimeout(() => {
+      timedOut = true;
+      exitCode = 1;
+      child.kill();
+    }, timeoutMs);
   });
 }
 
@@ -91,18 +160,30 @@ export async function runCodexTurn({
   taskId,
   turn,
   codexBin = "codex",
-  rootDir
+  rootDir,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  platform = process.platform,
+  spawnImpl = spawn,
+  appendTurnRecordImpl = appendTurnRecord
 }) {
-  const binParts = normalizeCodexBin(codexBin);
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-turn-"));
-  const lastMessagePath = path.join(tempDir, "last-message.txt");
+  validateTurnInputs(taskId, turn);
 
   let exitCode = 1;
   let timedOut = false;
   let lastMessage = "";
   let usage = {};
+  let stderrTail = "";
+  let errorMessage = "";
+  let tempDir = "";
+  let lastMessagePath = "";
 
   try {
+    const effectiveTimeoutMs = normalizeTimeoutMs(timeoutMs);
+    const binParts = normalizeCodexBin(codexBin, platform);
+
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-turn-"));
+    lastMessagePath = path.join(tempDir, "last-message.txt");
+
     const command = binParts[0];
     const args = [
       ...binParts.slice(1),
@@ -117,36 +198,51 @@ export async function runCodexTurn({
       prompt
     ];
 
-    const result = await runChild(command, args);
+    const result = await runChild(command, args, {
+      timeoutMs: effectiveTimeoutMs,
+      spawnImpl
+    });
     exitCode = result.exitCode;
     timedOut = result.timedOut;
+    stderrTail = result.stderrTail;
     usage = extractUsage(result.stdout);
+    errorMessage = result.error?.message || "";
 
     try {
       lastMessage = await fs.readFile(lastMessagePath, "utf8");
     } catch {
       lastMessage = "";
     }
+  } catch (error) {
+    exitCode = 1;
+    errorMessage = error?.message || String(error);
   } finally {
     await fs.rm(lastMessagePath, { force: true }).catch(() => {});
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
-  }
 
-  appendTurnRecord({
-    taskId,
-    turn,
-    kind: "codex-exec",
-    agent: "codex",
-    prompt,
-    output: lastMessage,
-    meta: { usage, exitCode },
-    rootDir
-  });
+    appendTurnRecordImpl({
+      taskId,
+      turn,
+      kind: "codex-exec",
+      agent: "codex",
+      prompt,
+      output: lastMessage,
+      meta: {
+        usage,
+        exitCode,
+        timedOut,
+        stderrTail,
+        ...(errorMessage ? { error: errorMessage } : {})
+      },
+      rootDir
+    });
+  }
 
   return {
     ok: exitCode === 0 && !timedOut,
     lastMessage,
     usage,
-    exitCode
+    exitCode,
+    timedOut
   };
 }

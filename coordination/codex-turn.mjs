@@ -14,6 +14,7 @@ const USAGE_FIELDS = [
 
 const DEFAULT_TIMEOUT_MS = 600000;
 const STDERR_TAIL_MAX_BYTES = 16384;
+const CMD_METACHAR_PATTERN = /["&^%|<>()]/;
 
 function validateTurnInputs(taskId, turn) {
   if (typeof taskId !== "string" || !taskId.trim()) {
@@ -36,17 +37,33 @@ function normalizeCodexBin(codexBin, platform = process.platform) {
     if (codexBin.length === 0) {
       throw new Error("codexBin 数组不得为空");
     }
-    return codexBin;
+    return {
+      binParts: codexBin,
+      viaCmdWrapper: false
+    };
   }
 
   if (typeof codexBin === "string" && codexBin.trim()) {
     if (platform === "win32") {
-      return ["cmd", "/c", codexBin];
+      return {
+        binParts: ["cmd", "/c", codexBin],
+        viaCmdWrapper: true
+      };
     }
-    return [codexBin];
+    return {
+      binParts: [codexBin],
+      viaCmdWrapper: false
+    };
   }
 
   throw new Error("codexBin 必须是非空字符串或数组");
+}
+
+function assertNoCmdMetacharArgs(args) {
+  const badArg = args.find(arg => CMD_METACHAR_PATTERN.test(String(arg)));
+  if (badArg !== undefined) {
+    throw new Error(`win32 cmd 转发参数含危险元字符，已拒绝执行：${badArg}`);
+  }
 }
 
 function extractUsage(stdout) {
@@ -81,14 +98,14 @@ function appendTailBuffer(current, chunk, maxBytes) {
   return next.length > maxBytes ? next.subarray(next.length - maxBytes) : next;
 }
 
-function runChild(command, args, { timeoutMs, spawnImpl = spawn } = {}) {
+function runChild(command, args, { timeoutMs, stdinInput = "", spawnImpl = spawn } = {}) {
   return new Promise(resolve => {
     let child;
 
     try {
       child = spawnImpl(command, args, {
         shell: false,
-        stdio: ["ignore", "pipe", "pipe"]
+        stdio: ["pipe", "pipe", "pipe"]
       });
     } catch (error) {
       resolve({
@@ -146,6 +163,13 @@ function runChild(command, args, { timeoutMs, spawnImpl = spawn } = {}) {
       finish({});
     });
 
+    if (child.stdin && typeof child.stdin.write === "function") {
+      child.stdin.write(stdinInput);
+      if (typeof child.stdin.end === "function") {
+        child.stdin.end();
+      }
+    }
+
     timer = setTimeout(() => {
       timedOut = true;
       exitCode = 1;
@@ -179,7 +203,7 @@ export async function runCodexTurn({
 
   try {
     const effectiveTimeoutMs = normalizeTimeoutMs(timeoutMs);
-    const binParts = normalizeCodexBin(codexBin, platform);
+    const { binParts, viaCmdWrapper } = normalizeCodexBin(codexBin, platform);
 
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-turn-"));
     lastMessagePath = path.join(tempDir, "last-message.txt");
@@ -195,11 +219,16 @@ export async function runCodexTurn({
       "workspace-write",
       "--output-last-message",
       lastMessagePath,
-      prompt
+      "-"
     ];
+
+    if (viaCmdWrapper) {
+      assertNoCmdMetacharArgs(args.slice(1));
+    }
 
     const result = await runChild(command, args, {
       timeoutMs: effectiveTimeoutMs,
+      stdinInput: String(prompt ?? ""),
       spawnImpl
     });
     exitCode = result.exitCode;

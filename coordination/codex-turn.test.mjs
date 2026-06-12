@@ -19,8 +19,6 @@ function makeTempRoot(t) {
 
 function makeSpawnStub(config, calls = []) {
   return (command, args) => {
-    calls.push({ command, args });
-
     if (config.throwOnSpawn) {
       throw config.throwOnSpawn;
     }
@@ -28,6 +26,20 @@ function makeSpawnStub(config, calls = []) {
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
+    const stdinChunks = [];
+    child.stdin = {
+      write(chunk) {
+        stdinChunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk));
+        return true;
+      },
+      end(chunk) {
+        if (chunk !== undefined) {
+          this.write(chunk);
+        }
+      }
+    };
+
+    calls.push({ command, args, stdinChunks });
 
     let closed = false;
     let timer = null;
@@ -377,8 +389,71 @@ test("runCodexTurn 传给 codex 的命令参数形态符合约束", async t => {
   const args = JSON.parse(fs.readFileSync(argvFile, "utf8"));
   assert.ok(args.includes("exec"));
   assert.ok(args.includes("--json"));
+  assert.ok(args.includes("-C"));
+  assert.ok(args.includes("C:/fake/worktree"));
   assert.ok(args.includes("--sandbox"));
   assert.ok(args.includes("workspace-write"));
   assert.ok(args.includes("--output-last-message"));
+  assert.ok(args.includes("-"));
   assert.equal(args.includes("--ask-for-approval"), false);
+  assert.equal(args.includes("请记录命令参数"), false);
+});
+
+test("runCodexTurn 会通过 stdin 原样传递 prompt，且命令行不携带注入载荷", async t => {
+  const rootDir = makeTempRoot(t);
+  const calls = [];
+  const prompt = "hello\" & echo INJECTED & echo \"\n第二行含%变量%和^尖号";
+  const spawnImpl = makeSpawnStub(
+    {
+      stdoutLines: [{ type: "turn.completed", usage: { output_tokens: 1 } }],
+      exitCode: 0
+    },
+    calls
+  );
+
+  const result = await runCodexTurn({
+    worktree: "C:/fake/worktree",
+    prompt,
+    taskId: "issue-1-stdin-prompt",
+    turn: 13,
+    codexBin: ["mock-codex"],
+    rootDir,
+    spawnImpl
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].stdinChunks.join(""), prompt);
+  assert.equal(calls[0].args.includes(prompt), false);
+  assert.equal(calls[0].args.some(arg => String(arg).includes("INJECTED")), false);
+  assert.equal(calls[0].args.some(arg => String(arg).includes("%变量%")), false);
+
+  const { records } = readTurnRecords("issue-1-stdin-prompt", { rootDir });
+  assert.equal(records.length, 1);
+  assert.equal(records[0].prompt, prompt);
+});
+
+test("runCodexTurn 在 win32 + 字符串 codexBin 时，路径参数含元字符会拒绝执行并留痕", async t => {
+  const rootDir = makeTempRoot(t);
+  const calls = [];
+  const spawnImpl = makeSpawnStub({}, calls);
+
+  const result = await runCodexTurn({
+    worktree: "C:/bad&(worktree)",
+    prompt: "不会真正执行",
+    taskId: "issue-1-win32-danger-path",
+    turn: 14,
+    codexBin: "codex",
+    rootDir,
+    platform: "win32",
+    spawnImpl
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.exitCode, 1);
+  assert.equal(calls.length, 0);
+
+  const { records } = readTurnRecords("issue-1-win32-danger-path", { rootDir });
+  assert.equal(records.length, 1);
+  assert.match(records[0].meta.error, /危险元字符/);
 });

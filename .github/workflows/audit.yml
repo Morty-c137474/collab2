@@ -1,0 +1,17 @@
+# 机器审计门：PR 上的中立公证。本地先跑过，这里复跑取信。
+# 设为 branch protection 的 required status check 后即是合并硬门槛。
+name: audit
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 全部测试
+        run: node --test coordination/*.test.mjs

@@ -1,0 +1,39 @@
+name: 任务契约
+description: 一个可被 agent 认领执行的任务（无验收标准不开工）
+title: "[task] "
+labels: ["task", "needs-lint"]
+body:
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景与目标
+      description: 为什么做、做成什么样算成
+      placeholder: 现状是…，希望改成…
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 改动范围
+      description: 允许触碰的文件/目录清单（越界会被审计判 fail）
+      placeholder: |
+        coordination/xxx.mjs
+        docs/yyy.md
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 可证伪的判据——测试命令、可观察行为，不接受"代码更好了"这类描述
+      placeholder: node --test coordination/xxx.test.mjs 全绿，且 …
+    validations:
+      required: true
+  - type: input
+    id: budget
+    attributes:
+      label: 预算
+      description: 最多干活轮数 / 墙钟时限（可空，默认 3 轮）
+      placeholder: 3 轮
+    validations:
+      required: false

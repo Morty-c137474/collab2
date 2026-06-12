@@ -1,0 +1,30 @@
+# 任务契约结构校验：issue 表单的 required 只在网页端强制，
+# API/gh 创建可绕过，所以这里补一道机器校验，合格才打 ready。
+name: contract-lint
+on:
+  issues:
+    types: [opened, edited]
+jobs:
+  lint:
+    if: contains(github.event.issue.labels.*.name, 'task')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || "";
+            const required = ["背景与目标", "改动范围", "验收标准"];
+            const missing = required.filter(h => !body.includes(h));
+            const issue_number = context.payload.issue.number;
+            if (missing.length === 0) {
+              await github.rest.issues.addLabels({ ...context.repo, issue_number, labels: ["ready"] });
+              await github.rest.issues.removeLabel({ ...context.repo, issue_number, name: "needs-lint" }).catch(() => {});
+            } else {
+              await github.rest.issues.removeLabel({ ...context.repo, issue_number, name: "ready" }).catch(() => {});
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number,
+                body: `契约缺少必填段落：${missing.join("、")}。补全后会自动打 ready。`
+              });
+            }

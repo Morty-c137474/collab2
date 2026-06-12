@@ -20,6 +20,10 @@ node --test coordination/*.test.mjs        # 全部测试
 codex exec --json -C <worktree> --sandbox workspace-write --output-last-message <file> "<prompt>"
 # gh 不读 git 的代理配置，一切 gh 调用必须显式带：
 HTTPS_PROXY=http://127.0.0.1:7897 gh <...>
+# agent 的 GitHub 身份 = 机器账号 lzyc137morty-glitch（仅 Write，无 admin）。
+# 凭证在仓库外私有文件，agent 操作 GitHub 前先加载：
+#   bash:  export $(grep -v '^#' ~/.claude/coordination/collab2-bot.env | xargs)
+# 主账号（人类）的管理操作一律走浏览器，本机 CLI 不留主账号凭证。
 ```
 
 ## 结构
@@ -41,8 +45,6 @@ scripts/        工程脚本（晨报等，待建）
 
 ## 当前阶段
 
-bootstrap 收尾：代理已修（gh 须显式 HTTPS_PROXY）、codex 配置已修、公开仓 collab2 已建、
-audit required check 已设为合并硬门槛。
-人闸过渡态：**机器账号注册前不开 Require approvals**（单账号下 PR 作者不能自批，开了即死结）；
-机器账号加为仅 Write 协作者后开启 approvals(1)，人闸才是完全体。
+bootstrap 完成：公开仓 [Morty-c137474/collab2] 已建，main 保护（必须走 PR + audit 绿 + 管理员同样受约束），
+机器账号 lzyc137morty-glitch 已加为仅 Write 协作者，agent 凭证已切到机器账号，Require approvals(1) 由人类在浏览器开启。
 下一步：手摇穿透第一个任务（issue #1：codex-turn.mjs 胶水，~120 行 + 测试）。
